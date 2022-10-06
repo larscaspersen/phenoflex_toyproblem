@@ -4,10 +4,10 @@
 # An example of the current fitting routine using PhenoFlex
 
 This is an example with flowering data of apple cultivar “Blanquina” for
-the period 1987 - 997 and 2004 - 2020 in Asturias, Spain. Hourly weather
-data was generated from daily temperature observations using the chillR
-function `stack_hourly_temps()`. Phenology and temperature data can be
-found in the “data” folder.
+the period 1987 - 1997 and 2004 - 2020 in Asturias, Spain. Hourly
+weather data was generated from daily temperature observations using the
+chillR function `stack_hourly_temps()`. Phenology and temperature data
+can be found in the “data” folder.
 
 In the “code” folder you can find a script called “example_fit.R”. It
 contains the usual routine we use to prepare the data and then carry out
