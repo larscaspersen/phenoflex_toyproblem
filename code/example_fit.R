@@ -1,4 +1,6 @@
 library(chillR)
+library(ggplot2)
+
 
 #read bloom data
 pheno_data <- readxl::read_excel('data/Blanquina.xlsx')
@@ -50,8 +52,6 @@ mean(abs(cal_data$pheno - Fit_res$pbloomJDays))
 mean(cal_data$pheno - Fit_res$pbloomJDays)
 
 
-#plot the residuals and the temperature response
-library(ggplot2)
 
 #read functions to easily create plots
 source('code/helper_functions.R')
@@ -63,3 +63,16 @@ temp_values = seq(-5, 40, 0.1)
 get_qqplot(cal_data, Fit_res$pbloomJDays)
 get_hist_plot(cal_data$pheno - Fit_res$pbloomJDays)
 get_temp_response_plot(Fit_res$par, temp_values)
+
+
+
+# Not sure if this may be useful: 
+# In the next fitting run, we re-define the parameters based on the results obtained here (i.e. Fit_res$par). Lower and upper
+# bounds are then adjusted to keep the estimated par within the boundaries... We finally run the fitting function again,
+# searching for lower RMSE and "plausible" response curves.
+
+
+
+
+
+
