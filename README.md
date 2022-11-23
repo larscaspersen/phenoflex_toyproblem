@@ -5,28 +5,28 @@
 
 This is an example with flowering data of apple cultivar “Blanquina” for
 the period 1987 - 1997 and 2004 - 2020 in Asturias, Spain. Hourly
-weather data was generated from daily temperature observations using the
-chillR function `stack_hourly_temps()`. Phenology and temperature data
-can be found in the “data” folder.
+weather data were generated from daily temperature observations using
+the chillR function `stack_hourly_temps()`. Phenology and temperature
+data can be found in the “data” folder.
 
-In the “code” folder you can find a script called “example_fit.R”. It
+In the “code”, folder you can find a script called “example_fit.R”. It
 contains the usual routine we use to prepare the data and then carry out
-the first (of usually more than 10) round of fitting using the function
-`phenologyFitter()` fromt the chillR package. The function requires
-several arguments:
+the first (out of usually more than 10) round of fitting using the
+function `phenologyFitter()` from the chillR package. The function
+requires several arguments:
 
 -   **par.guess** contains the initial guess for the parameters. The
-    order should be (yc, zc, s1, Tu, E0, E1, A0, A1, Tf, Tc, Tb, slope)
--   **modelfn**, this is the wrapper function for the phenoflex model.
-    It can also be customised, so that some parameters are for example
-    kept constant.
--   **bloomJDays** is a vector of the Juliand days of the flowering
+    order should be (yc, zc, s1, Tu, E0, E1, A0, A1, Tf, Tc, Tb, slope).
+-   **modelfn** is the wrapper function for the phenoflex model. It can
+    also be customised, so that some parameters are for example kept
+    constant.
+-   **bloomJDays** is a vector of the Julian days of the flowering.
 -   **SeasonList** is a list with the hourly temperature data organized
-    in the same order as the provided phenology data
--   **lower** contains the lower bounds of the model parameters
--   **upper** contains the upper bounds of the model parameters
--   **seed** to make results reproducible
--   **control**, a list of further variables directly passed to the
+    in the same order as the provided phenology data.
+-   **lower** contains the lower bounds of the model parameters.
+-   **upper** contains the upper bounds of the model parameters.
+-   **seed** to make results reproducible.
+-   **control** is a list of further variables directly passed to the
     simulation annealing function currently used in phenoflex
     (`GenSA::GenSA()`). Most interesting is “maxit” which defines the
     maximum number of iterations. “max.time” could be also of interest,
