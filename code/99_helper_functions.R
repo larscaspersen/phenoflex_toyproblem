@@ -93,7 +93,12 @@ GDH_response <- function(T, par)
 }
 
 
-get_temp_response_plot <- function(par, temp_values){
+get_temp_response_plot <- function(par, temp_values, log_A = FALSE){
+  
+  if(log_A){
+    par[7]<-exp(par[7])
+    par[8]<-exp(par[8])
+  }
   
   temp_response <- data.frame(
     Temperature = temp_values,
