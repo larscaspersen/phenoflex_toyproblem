@@ -21,10 +21,21 @@ n_train <- floor(nrow(bloom)*0.75)
 years <- sample(bloom$Year, n_train, replace = FALSE)
 
 #extract the days of bloom
-bloomJDays <- bloom[bloom$Year %in% years,]$pheno
+bloomJDays <- c()
+for(year in years){
+  bloomJDays <- c(bloomJDays,bloom[bloom$Year == year,]$pheno)
+}
+
+#evalulation
+eval_years <-  bloom$Year[!(bloom$Year %in% years)]
+eval_bloomJDays <- c()
+for(year in eval_years){
+  eval_bloomJDays <- c(eval_bloomJDays,bloom[bloom$Year == year,]$pheno)
+}
 
 #create a list of the temperature data split by each chill season
 SeasonList <- chillR::genSeasonList(hourtemps, years = years)
+eval_SeasonList <- chillR::genSeasonList(hourtemps, years = eval_years)
 
 #this function takes the weather data (x) and the model parameters (par) and returns the expected day of bloom 
 custom_PhenoFlex_GDHwrapper <- function (x, par){
@@ -36,38 +47,36 @@ custom_PhenoFlex_GDHwrapper <- function (x, par){
   par[8]<-exp(par[8])
   
   #in case the parameters do not make sense, return NA
-  if (par[4] <= par[11]) 
+  if (par[4] <= par[11]){
     return(NA)
-  if (par[10] <= par[4]) 
+  } else if(par[10] <= par[4]){
     return(NA)
-  
-  #also when the q10 criterion is outside the limits of 1.5 and 3.5
-  if(exp((10 * par[5]) / (297 * 279)) < 1.5 |  exp((10 * par[5]) / (297 * 279)) > 3.5 ){
+  } else if(exp((10 * par[5]) / (297 * 279)) < 1.5 |  exp((10 * par[5]) / (297 * 279)) > 3.5 ){
+    #also when the q10 criterion is outside the limits of 1.5 and 3.5
     return(NA)
-  }
-  
-  if(exp((10 * par[6]) / (297 * 279)) < 1.5 |  exp((10 * par[6]) / (297 * 279)) > 3.5 ){
+  } else if(exp((10 * par[6]) / (297 * 279)) < 1.5 |  exp((10 * par[6]) / (297 * 279)) > 3.5 ){
     return(NA)
+  } else{
+    #calculat the bloom day
+    bloomindex <- PhenoFlex(temp = x$Temp, times = seq_along(x$Temp), 
+                            yc = par[1], zc = par[2], s1 = par[3], Tu = par[4], E0 = par[5], 
+                            E1 = par[6], A0 = par[7], A1 = par[8], Tf = par[9], Tc = par[10], 
+                            Tb = par[11], slope = par[12], Imodel = 0L, basic_output = TRUE)$bloomindex
+    
+    #return values
+    if (bloomindex == 0){
+      return(NA)
+    } 
+      
+    JDay <- x$JDay[bloomindex]
+    JDaylist <- which(x$JDay == JDay)
+    n <- length(JDaylist)
+    if (n == 1){
+      return(JDay)
+    } 
+    return(JDay + which(JDaylist == bloomindex)/n - 1/(n/ceiling(n/2)))
   }
 
-  
-  
-  
-  #calculat the bloom day
-  bloomindex <- PhenoFlex(temp = x$Temp, times = seq_along(x$Temp), 
-                          yc = par[1], zc = par[2], s1 = par[3], Tu = par[4], E0 = par[5], 
-                          E1 = par[6], A0 = par[7], A1 = par[8], Tf = par[9], Tc = par[10], 
-                          Tb = par[11], slope = par[12], Imodel = 0L, basic_output = TRUE)$bloomindex
-  
-  #return values
-  if (bloomindex == 0) 
-    return(NA)
-  JDay <- x$JDay[bloomindex]
-  JDaylist <- which(x$JDay == JDay)
-  n <- length(JDaylist)
-  if (n == 1) 
-    return(JDay)
-  return(JDay + which(JDaylist == bloomindex)/n - 1/(n/ceiling(n/2)))
 }
 
 
@@ -245,7 +254,7 @@ sol_f[1] <- evaluation_function_meigo(sol_x[1,], modelfn =  custom_PhenoFlex_GDH
 #create random sets of parameters combinations
 for (i in 2:n_init){
   sol_x[i,] <- runif(12)*(x_U-x_L)+x_L
-  sol_f[i] <- evaluation_function_meigo(sol_x[i,], modelfn =  custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList)$F
+  sol_f[i] <- evaluation_function_meigo(x = sol_x[i,], modelfn =  custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList)$F
 }
 
 #take the ten best start points
@@ -256,10 +265,16 @@ sol_f[i_best]
 
 #I want to experiment on different starting points, that is why I put them in a list
 start_points <- lapply(i_best, function(i) sol_x[i,])
+#add the traditional start point aswell
+
+write.csv(start_points, 'start_points.csv', row.names = FALSE)
+write.csv(bloomJDays, 'bloomJDays.csv', row.names = FALSE)
+write.csv(years, 'years.csv', row.names = FALSE)
 
 
 #iterate other the start points
-for(i in 1:length(start_points)){
+for(i in 5:7){
+#for(i in 1:length(start_points)){
   start_parameters <- start_points[[i]]
   
   #=========================
@@ -277,13 +292,15 @@ for(i in 1:length(start_points)){
   #iterate over the solver
   for(solver in local_solver){
     
+    evaluation_function_meigo(start_parameters, modelfn =  custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList)$g
+    
     #specify options for the solver
     opts<-list(#maxeval = 1000,
                maxtime = 60 * 2, 
                local_solver = solver, 
                log_var = 7:8,
                local_bestx = 1,
-               inter_save = 1)
+               inter_save = 0)
     
     Results_meigo<-MEIGO(problem,
                               opts,
@@ -310,34 +327,537 @@ for(i in 1:length(start_points)){
   
 }
 
+results_list[[1]]
+
 #evaluation of the fitted parameters
+result_list_8to10 <- readRDS("result_run1_8to10.rds")
+result_list_combined <- c(results_list, result_list_8to10[8:10])
 
 
-fbest <- purrr::map(results_list, function(x){
-  unlist(purrr::map(x, 'fbest'))
-}) 
+fbest <- purrr::map(result_list_combined, function(x){
+  purrr::map(x, function(y){
+    data.frame(
+      f = c(y$f, y$fbest),
+      neval = c(y$neval, y$numeval)
+    )
+  }) %>% 
+    bind_rows(.id = 'solver')
+  
+}) %>% 
+  bind_rows(.id = 'start_point')
 
-fbest <- do.call('rbind', fbest[1:8])
 
-fbest_long <- reshape2::melt(fbest)
-colnames(fbest_long) <- c('start_point', 'solver', 'f')
+# ggplot(fbest_long, aes(x = solver, y = f)) +
+#   geom_point() +
+#   facet_grid(~start_point)
+# 
+# #get rank per run
+# fbest_long %>% 
+#   group_by(start_point) %>% 
+#   mutate(rank = rank(f)) %>% 
+#   ungroup() %>% 
+#   group_by(solver) %>% 
+#   summarise(mean_rank = mean(rank),
+#             median_rank = median(rank),
+#             sd_rank = sd(rank))
 
-ggplot(fbest_long, aes(x = solver, y = f)) +
-  geom_point() +
-  facet_grid(~start_point)
 
-#get rank per run
-fbest_long %>% 
-  group_by(start_point) %>% 
-  mutate(rank = rank(f)) %>% 
+#maybe take the 10 best intermediate results and use that as a new starting point?
+top_results <- fbest %>% 
+  group_by(solver, start_point) %>% 
+  summarise(f = min(f),
+            neval = max(neval)) %>% 
   ungroup() %>% 
-  group_by(solver) %>% 
-  summarise(mean_rank = mean(rank),
-            median_rank = median(rank),
-            sd_rank = sd(rank))
+  slice_min(order_by = f, n = 10)
+
+
+ggplot(fbest, aes(x = neval, y = f, col = as.factor(start_point))) + 
+  geom_point() +
+  geom_line() +
+  facet_grid(~solver) +
+  coord_cartesian(ylim = c(0, 5000))
+
+
+ggplot(fbest, aes(x = neval/1000, y = f, col = solver)) + 
+  geom_point() +
+  geom_line() +
+#  geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  theme_bw()
+
+ggsave('moderl_perofrmance_r1_total.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+ggplot(fbest, aes(x = neval/1000, y = f, col = solver)) + 
+  geom_point() +
+  geom_line() +
+#  geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point)) +
+  coord_cartesian(ylim = c(0, 2000)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  theme_bw()
+
+ggsave('moderl_perofrmance_r1_zoom.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+
+ggplot(fbest, aes(x = neval/1000, y = f, col = solver)) + 
+  geom_point() +
+  geom_line() +
+  geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point)) +
+  coord_cartesian(ylim = c(0, 2000)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  theme_bw()
+
+ggsave('moderl_perofrmance_r1_zoom_highlight.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+
+
+
+saveRDS(result_list_combined, 'results_fit_run1.rds')
+
+#start points for second run of fitting
+
+start_point_r2 <- list()
+
+for(i in seq_along(top_results$f)){
+  start <- as.numeric(top_results$start_point[i])
+  start_point_r2[[i]] <- result_list_combined[[start]][[top_results$solver[i]]]$xbest
+  p <- get_temp_response_plot(result_list_combined[[start]][[top_results$solver[i]]]$xbest, temp_values = seq(-10,40, by = 0.1), log_A = TRUE)
+  fname <- paste0('figures/run1_start_point_',i, 'temp_response.jpeg')
+  ggsave(plot = p, filename = fname, height = 10, width = 15, units = 'cm', device = 'jpeg')
+}
+
+
+#write the model performance
+for(i in seq_along(top_results$f)){
+  print(i)
+  start <- as.numeric(top_results$start_point[i])
+  par <- result_list_combined[[start]][[top_results$solver[i]]]$xbest
+  #training
+  pred_days <- evaluation_function_meigo(par, modelfn = custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList, return_bloom_days = TRUE)
+  print(RMSEP(pred_days, bloomJDays))
+  #evaluation
+  pred_eval_days <- evaluation_function_meigo(par, modelfn = custom_PhenoFlex_GDHwrapper, bloomJDays = eval_bloomJDays, SeasonList = eval_SeasonList, return_bloom_days = TRUE)
+  print(RMSEP(pred_eval_days, eval_bloomJDays))
+  print('------')
+}
+
+saveRDS(start_point_r2, 'start_points_r2.rds')
+
+result_list_r2 <- list()
+
+#iterate other the start points
+for(i in 1:5){
+  #for(i in 1:length(start_points)){
+  start_parameters <- start_point_r2[[i]]
+  
+  #=========================
+  #PROBLEM SPECIFICATIONS
+  #=========================
+  problem<-list(f="evaluation_function_meigo",
+                x_0 = start_parameters,
+                x_L = x_L,
+                x_U = x_U,
+                c_L = c_L, 
+                c_U = c_U)
+  
+  result_list_r2[[i]] <- list()
+  
+  #iterate over the solver
+  for(solver in local_solver){
+    
+    #evaluation_function_meigo(start_parameters, modelfn =  custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList)$g
+    
+    #specify options for the solver
+    opts<-list(#maxeval = 1000,
+      maxtime = 60 * 2, 
+      local_solver = solver, 
+      log_var = 7:8,
+      local_bestx = 1,
+      inter_save = 0)
+    
+    Results_meigo<-MEIGO(problem,
+                         opts,
+                         algorithm="ESS", 
+                         modelfn = custom_PhenoFlex_GDHwrapper,
+                         bloomJDays = bloomJDays,
+                         SeasonList = SeasonList)
+    
+    result_list_r2[[i]][[solver]] <- Results_meigo
+    
+    # pred_days <- evaluation_function_meigo(x =  Results_meigo$xbest,
+    #                           modelfn = custom_PhenoFlex_GDHwrapper,
+    #                           bloomJDays = bloomJDays,
+    #                           SeasonList = SeasonList, 
+    #                           return_bloom_days = TRUE)
+    # 
+    # chillR::RPIQ(predicted = pred_days, observed = bloomJDays)
+    # chillR::RMSEP(predicted = pred_days, observed = bloomJDays)
+    
+    
+  }
+  
+  
+  
+}
+
+result_list_r2_6to10 <- readRDS("result_run2_6to10.rds")
+result_list_r2_combined <- c(result_list_r2, result_list_r2_6to10[6:10])
+
+fbest_r2 <- purrr::map(result_list_r2_combined, function(x){
+  purrr::map(x, function(y){
+    data.frame(
+      f = c(y$f, y$fbest),
+      neval = c(y$neval, y$numeval)
+    )
+  }) %>% 
+    bind_rows(.id = 'solver')
+  
+}) %>% 
+  bind_rows(.id = 'start_point')
+
+
+ggplot(fbest_r2, aes(x = neval/1000, y = f, col = solver)) + 
+  geom_point() +
+  geom_line() +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point)) +
+  coord_cartesian(ylim = c(0, 2000)) +
+  theme_bw()
+
+ggsave('moderl_perofrmance_r2.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+#combine fbest2 and fbest, also
+
+neval_r2 <- fbest %>% 
+  group_by(solver, start_point) %>% 
+  summarise(eval_r1 = max(neval))
+
+
+start_r2 <- fbest %>% 
+  group_by(solver, start_point) %>% 
+  summarise(f = min(f),
+            neval = max(neval)) %>% 
+  mutate(solver = paste0(solver, '_r2'),
+         run = 'run_2')
+
+#add another column to top_results
+top_results$start_point_r2 <- 1:10
+top_results$neval_r1 <- top_results$neval
+
+#safe new start point in seperate column
+fbest_r2$start_point_r2 <- fbest_r2$start_point
+
+#change start_point to old start point of r1
+
+
+fbest$run <- 'run_1'
+fbest$start_point_r2 <- NA
+
+#start_point of r2 does not correspond to start point of r1
+#need to have two labels?
+#start_point_r1 and start_point_r2
+
+
+test <- fbest_r2 %>% 
+  mutate(run = 'run_2',
+         start_point = recode(start_point,
+                              `1` = 3, `2` = 8, `3` = 1, `4` = 8, `5` = 4,
+                              `6` = 6, `7` = 1, `8` = 2, `9` = 1, `10` = 10)) %>% 
+  merge(top_results[,c('start_point_r2', 'neval_r1')], by = 'start_point_r2') %>% 
+#  merge(neval_r2, by = c('start_point', 'solver')) %>% 
+   # mutate(neval = neval + eval_r1,
+   #      solver = paste0(solver, '_r2')) %>%
+  mutate(neval = neval + neval_r1) %>% 
+  select(start_point, solver, f, neval, run, start_point_r2) %>% 
+  rbind(fbest) %>% 
+  mutate(id = paste0(solver, start_point, start_point_r2))
+
+
+#  rbind(start_r2) %>% 
+#  ggplot(aes(x = neval/1000, y = f, col = solver)) + 
+ggplot(test, aes(x = neval/1000, y = f)) + 
+  geom_point(aes(col = run)) +
+  geom_line(aes(col = run, group = id)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point), scales = 'free_x') +
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  coord_cartesian(ylim = c(0, 2000)) +
+  theme_bw()
+
+ggsave('moderl_perofrmance_combined.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+#combine it with the other data.frame
+
+
+
+top_r2 <- test %>% 
+  filter(run == 'run_2') %>% 
+  group_by(solver, start_point_r2, start_point) %>% 
+  summarise(f = min(f),
+            neval = max(neval)) %>%
+  ungroup() %>% 
+  distinct(f, .keep_all = TRUE) %>% 
+  slice_min(order_by = f, n = 10)
+
+
+
+
+
+ggplot(test, aes(x = neval/1000, y = f)) + 
+  geom_point(aes(col = run)) +
+  geom_line(aes(col = run, group = id)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point), scales = 'free_x') +
+  geom_point(data = top_r2, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  coord_cartesian(ylim = c(0, 2000)) +
+  theme_bw()
+
+ggsave('moderl_perofrmance_combined_highlight.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+
+for(i in seq_along(top_r2$f)){
+  start <- as.numeric(top_r2$start_point_r2[i])
+  solver <- top_r2$solver[i]
+  par <- result_list_r2_combined[[start]][[solver]]$xbest
+  #p <- get_temp_response_plot(result_list_combined[[start]][[top_results$solver[i]]]$xbest, temp_values = seq(-10,40, by = 0.1), log_A = TRUE)
+  p <- get_temp_response_plot(result_list_combined[[start]][[top_results$solver[i]]]$xbest, 
+                         temp_values = seq(-10,40, by = 0.1), log_A = TRUE, hourtemps = hourtemps[hourtemps$Year %in% years,])
+  fname <- paste0('figures/run3_start_point_',i, 'temp_response.jpeg')
+  fname <- paste0('figures/run2_start_point_',i, 'temp_response.jpeg')
+  ggsave(plot = p, filename = fname, height = 10, width = 15, units = 'cm', device = 'jpeg')
+
+  
+  print(i)
+  #training
+  pred_days <- evaluation_function_meigo(par, modelfn = custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList, return_bloom_days = TRUE)
+  print(RMSEP(pred_days, bloomJDays))
+  #evaluation
+  pred_eval_days <- evaluation_function_meigo(par, modelfn = custom_PhenoFlex_GDHwrapper, bloomJDays = eval_bloomJDays, SeasonList = eval_SeasonList, return_bloom_days = TRUE)
+  print(RMSEP(pred_eval_days, eval_bloomJDays))
+  print('------')
+}
 
 #--> looks like DHC has best rank and simular sd
 #SA and SOLNP also look decent
+
+
+
+par_hajar <- c(4.030065e+01, 1.761458e+02, 1.009330e-01, 2.753515e+01, 3.372800e+03, 9.900298e+03, 6.155735e+03,
+               5.939889e+13, 2.104434e+00, 3.520949e+01, 6.656520e+00, 1.167121e+01)
+get_temp_response_plot(par_hajar, temp_values = seq(-10,40, by = 0.1), log_A = FALSE)
+
+fname <- paste0('figures/hajar_fit_blanquina.jpeg')
+ggsave(plot = p, filename = fname, height = 10, width = 15, units = 'cm', device = 'jpeg')
+
+
+
+
+
+
+
+#third run of fitting
+
+#write the model performance
+start_point_r3 <- list()
+
+for(i in seq_along(top_r2$f)){
+  start <- as.numeric(top_r2$start_point_r2[i])
+  solver <- top_r2$solver[i]
+  start_point_r3[[i]] <- result_list_r2_combined[[start]][[solver]]$xbest
+}
+
+saveRDS(start_point_r3, 'start_points_r3.rds')
+
+result_list_r3 <- list()
+
+#iterate other the start points
+for(i in 1:5){
+  #for(i in 1:length(start_points)){
+  start_parameters <- start_point_r3[[i]]
+  
+  #=========================
+  #PROBLEM SPECIFICATIONS
+  #=========================
+  problem<-list(f="evaluation_function_meigo",
+                x_0 = start_parameters,
+                x_L = x_L,
+                x_U = x_U,
+                c_L = c_L, 
+                c_U = c_U)
+  
+  result_list_r3[[i]] <- list()
+  
+  #iterate over the solver
+  for(solver in local_solver){
+    
+    #evaluation_function_meigo(start_parameters, modelfn =  custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList)$g
+    
+    #specify options for the solver
+    opts<-list(#maxeval = 1000,
+      maxtime = 60 * 2, 
+      local_solver = solver, 
+      log_var = 7:8,
+      local_bestx = 1,
+      inter_save = 0)
+    
+    Results_meigo<-MEIGO(problem,
+                         opts,
+                         algorithm="ESS", 
+                         modelfn = custom_PhenoFlex_GDHwrapper,
+                         bloomJDays = bloomJDays,
+                         SeasonList = SeasonList)
+    
+    result_list_r3[[i]][[solver]] <- Results_meigo
+    
+  }
+
+}
+
+result_list_r3_6to10 <- readRDS("result_run3_6to10.rds")
+result_list_r3_combined <- c(result_list_r3, result_list_r3_6to10[6:10])
+
+
+fbest_r3 <- purrr::map(result_list_r3_combined, function(x){
+  purrr::map(x, function(y){
+    data.frame(
+      f = c(y$f, y$fbest),
+      neval = c(y$neval, y$numeval)
+    )
+  }) %>% 
+    bind_rows(.id = 'solver')
+  
+}) %>% 
+  bind_rows(.id = 'start_point')
+
+#save start point to other column
+fbest_r3$start_point <- factor(fbest_r3$start_point, levels = 1:10)
+fbest_r3$start_point_r3 <- fbest_r3$start_point
+fbest_r3$start_point_r2 <- fbest_r3$start_point
+
+levels(fbest_r3$start_point) <- top_r2$start_point
+levels(fbest_r3$start_point_r2) <- top_r2$start_point_r2
+
+top_r2$start_point_r3 <- 1:10
+test$start_point_r3 <- NA
+
+fbest_combined <- fbest_r3 %>% 
+  merge(top_r2[,c('start_point', 'start_point_r2', 'start_point_r3', 'neval')], 
+      by = c('start_point', 'start_point_r2', 'start_point_r3')) %>% 
+  mutate(neval = neval.x + neval.y,
+         id = paste0(solver, start_point, start_point_r2, start_point_r3),
+         run = 'run_3') %>% 
+  select(start_point, start_point_r2, start_point_r3, solver, f, neval, id, run) %>% 
+  rbind(test) %>% 
+  mutate(start_point = factor(start_point, levels = 1:10),
+         start_point_r2 = factor(start_point_r2, levels = 1:10),
+         start_point_r3 = factor(start_point_r3, levels = 1:10))
+
+ggplot(fbest_r3, aes(x = neval/1000, y = f, col = solver)) + 
+  geom_point() +
+  geom_line() +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~start_point_r3) +
+  coord_cartesian(ylim = c(0, 2000)) +
+  theme_bw()
+
+ggsave('moderl_perofrmance_r3.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+#combine fbest2 and fbest, also
+
+#  rbind(start_r2) %>% 
+#  ggplot(aes(x = neval/1000, y = f, col = solver)) + 
+ggplot(fbest_combined, aes(x = neval/1000, y = f)) + 
+  geom_point(aes(col = run)) +
+  geom_line(aes(col = run, group = id)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point), scales = 'free_x') +
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  coord_cartesian(ylim = c(0, 2000)) +
+  theme_bw()
+
+ggsave('moderl_perofrmance_combined.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+#combine it with the other data.frame
+
+
+
+top_r3 <- fbest_combined %>% 
+  filter(run == 'run_3') %>% 
+  group_by(solver, start_point, start_point_r2, start_point_r3) %>% 
+  summarise(f = min(f),
+            neval = max(neval)) %>%
+  ungroup() %>% 
+  distinct(f, .keep_all = TRUE) %>% 
+  slice_min(order_by = f, n = 10)
+
+
+#highlight
+ggplot(fbest_combined, aes(x = neval/1000, y = f)) + 
+  geom_point(aes(col = run)) +
+  geom_line(aes(col = run, group = id)) +
+  ylab('Residual Sum of Squares (RSS)')+
+  xlab('Number of evaluations * 1000')+
+  #geom_point(data = top_results, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  facet_grid(~as.factor(start_point), scales = 'free_x') +
+  geom_point(data = top_r3, aes(x = neval/1000, y = f), col = 'red', shape = 1, size = 4, stroke = 2)+
+  coord_cartesian(ylim = c(0, 2000)) +
+  theme_bw()
+
+ggsave('moderl_perofrmance_combined_highlight.jpeg', height = 10, width = 20, units = 'cm', device = 'jpeg')
+
+
+
+for(i in seq_along(top_r3$f)){
+  start <- as.numeric(top_r3$start_point_r3[i])
+  solver <- top_r3$solver[i]
+  par <- result_list_r3_combined[[start]][[solver]]$xbest
+  p <- get_temp_response_plot(result_list_combined[[start]][[top_results$solver[i]]]$xbest, 
+                              temp_values = seq(-10,40, by = 0.1), log_A = TRUE, hourtemps = hourtemps[hourtemps$Year %in% years,])
+  fname <- paste0('figures/run3_start_point_',i, 'temp_response.jpeg')
+  ggsave(plot = p, filename = fname, height = 10, width = 15, units = 'cm', device = 'jpeg')
+  
+  
+  print(i)
+  #training
+  pred_days <- evaluation_function_meigo(par, modelfn = custom_PhenoFlex_GDHwrapper, bloomJDays = bloomJDays, SeasonList = SeasonList, return_bloom_days = TRUE)
+  print(RMSEP(pred_days, bloomJDays))
+  #evaluation
+  pred_eval_days <- evaluation_function_meigo(par, modelfn = custom_PhenoFlex_GDHwrapper, bloomJDays = eval_bloomJDays, SeasonList = eval_SeasonList, return_bloom_days = TRUE)
+  print(RMSEP(pred_eval_days, eval_bloomJDays))
+  print('------')
+}
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -385,16 +905,20 @@ get_temp_response_plot(results_list[[7]][['SA']]$xbest, temp_values = seq(-10,40
 
 
 
+
+
+
+
 #--> make a more thourough search with these 3 solvers
-results_list_2 <- list()
+results_list_sa <- list()
 #use the sofar fitted values as a start point
 
 #iterate other the start points
 for(i in 1:8){
-  results_list_2[[i]] <- list()
+  results_list_sa[[i]] <- list()
   
   #iterate over the solver
-  for(solver in c('DHC', 'SA', 'SOLNP')){
+  for(solver in c('SA')){
     
     start_parameters <- results_list[[i]][[solver]]$xbest
     
@@ -423,7 +947,7 @@ for(i in 1:8){
                          bloomJDays = bloomJDays,
                          SeasonList = SeasonList)
     
-    results_list_2[[i]][[solver]] <- Results_meigo
+    results_list_sa[[i]][[solver]] <- Results_meigo
     
     # pred_days <- evaluation_function_meigo(x =  Results_meigo$xbest,
     #                           modelfn = custom_PhenoFlex_GDHwrapper,
@@ -518,6 +1042,127 @@ get_temp_response_plot(results_list_2[[6]][['SA']]$xbest, temp_values = seq(-10,
 results_list_2[[7]][['DHC']]$f
 
 
+
+
+
+df_performance <- purrr::map(1:8, function(x){
+  purrr::map(results_list[[x]], function(y){
+    
+    if(length(y) == 0){
+      return(NULL)
+    } else{
+      return(    data.frame(start_point = x,
+                            f = y$f,
+                            neval = y$neval))
+    }
+
+  }) %>% 
+    bind_rows(.id = 'solver')
+  
+  
+}) %>% 
+  bind_rows()
+
+
+#now add the information of results_list_2
+df_performance_2 <- purrr::map(1:8, function(x){
+  purrr::map(results_list_2[[x]], function(y){
+    return(    data.frame(start_point = x,
+                          f = y$f,
+                          neval = y$neval))
+    
+  }) %>% 
+    bind_rows(.id = 'solver')
+}) %>% 
+  bind_rows()
+
+#now add the total number of runs to the df_performance_2
+
+n_runs <- df_performance %>% 
+  group_by(solver, start_point) %>% 
+  summarise(max = max(neval))
+
+df_performance <- merge.data.frame(df_performance_2, n_runs, by = c('solver', 'start_point')) %>% 
+  mutate(neval = neval + max) %>% 
+  select(solver, start_point, f, neval) %>% 
+  rbind(df_performance)
+
+
+ggplot(df_performance, aes(x = neval, y = f, col = as.factor(start_point))) + 
+  geom_point() +
+  geom_line() +
+  facet_grid(~solver) +
+  coord_cartesian(ylim = c(0, 5000))
+
+
+
+
+#maybe give the optimizers more time?
+
+
+#--> make a more thourough search with these 3 solvers
+results_list_3 <- list()
+#use the sofar fitted values as a start point
+
+#iterate other the start points
+for(i in 1:8){
+  results_list_3[[i]] <- list()
+  
+  #iterate over the solver
+  for(solver in c('DHC', 'SA', 'SOLNP')){
+    
+    start_parameters <- results_list_2[[i]][[solver]]$xbest
+    
+    #=========================
+    #PROBLEM SPECIFICATIONS
+    #=========================
+    problem<-list(f="evaluation_function_meigo",
+                  x_0 = start_parameters,
+                  x_L = x_L,
+                  x_U = x_U,
+                  c_L = c_L, 
+                  c_U = c_U)
+    
+    #specify options for the solver
+    opts<-list(#maxeval = 1000,
+      maxtime = 60 * 5, 
+      local_solver = solver, 
+      log_var = 7:8,
+      local_bestx = 1,
+      inter_save = 1)
+    
+    Results_meigo<-MEIGO(problem,
+                         opts,
+                         algorithm="ESS", 
+                         modelfn = custom_PhenoFlex_GDHwrapper,
+                         bloomJDays = bloomJDays,
+                         SeasonList = SeasonList)
+    
+    results_list_3[[i]][[solver]] <- Results_meigo
+    
+    # pred_days <- evaluation_function_meigo(x =  Results_meigo$xbest,
+    #                           modelfn = custom_PhenoFlex_GDHwrapper,
+    #                           bloomJDays = bloomJDays,
+    #                           SeasonList = SeasonList, 
+    #                           return_bloom_days = TRUE)
+    # 
+    # chillR::RPIQ(predicted = pred_days, observed = bloomJDays)
+    # chillR::RMSEP(predicted = pred_days, observed = bloomJDays)
+    
+    
+  }
+  
+  
+  
+}
+
+
+
+
+
+
+
+
 #--> make a more thourough search with these 3 solvers
 results_list_3 <- list()
 #use the sofar fitted values as a start point
@@ -545,8 +1190,8 @@ for(i in 1:8){
     
     #n_contraction=6
     
-    x_L_old <- x_L_new
-    x_U_old <- x_U_new
+    x_L_old <- x_L
+    x_U_old <- x_U
     
     x_L_new <- x_L_old * (1 + contract_percent)
     x_L_new <- ifelse(x_L_new == 0, yes = x_L_new + (contract_percent * x_U_old), no = x_L_new)
@@ -570,8 +1215,8 @@ for(i in 1:8){
     
     #specify options for the solver
     opts<-list(#maxeval = 1000,
-      maxtime = 60 * 2, 
-      ndiverse = 1000,
+      maxtime = 60 * 5, 
+      ndiverse = 500,
       local_solver = solver, 
       log_var = 7:8,
       local_bestx = 1,
@@ -605,6 +1250,8 @@ for(i in 1:8){
   
   
 }
+
+results_list_3
 
 
 pred_days <- evaluation_function_meigo(x =  start_parameters,
