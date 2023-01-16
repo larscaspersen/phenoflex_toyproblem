@@ -93,34 +93,146 @@ GDH_response <- function(T, par)
 }
 
 
-get_temp_response_plot <- function(par, temp_values, log_A = FALSE){
+get_temp_response_plot <- function(par, temp_values, log_A = FALSE, 
+                                   hourtemps = NULL, chill_months = c(11:12,1:2),
+                                   heat_months = 1:5, type = 1){
   
   if(log_A){
     par[7]<-exp(par[7])
     par[8]<-exp(par[8])
   }
   
-  temp_response <- data.frame(
-    Temperature = temp_values,
-    Chill_response = gen_bell(par, temp_values),
-    Heat_response = GDH_response(temp_values, par)
-  )
+
+  if(is.null(hourtemps) == FALSE){
+    chill_temp_obs <- hourtemps %>% 
+      filter(Month %in% chill_months) %>% 
+      summarise(density = c(hist(Temp, breaks = temp_values, plot = FALSE)$density,NA),
+                count = c(hist(Temp, breaks = temp_values, plot = FALSE)$counts, NA)) %>% 
+      mutate(density = density / max(density,na.rm = TRUE))
+    
+    heat_temp_obs <- hourtemps %>% 
+      filter(Month %in% heat_months) %>% 
+      summarise(density = c(hist(Temp, breaks = temp_values, plot = FALSE)$density,NA),
+                count = c(hist(Temp, breaks = temp_values, plot = FALSE)$counts, NA)) %>% 
+      mutate(density = density / max(density,na.rm = TRUE))
+    
+    density_df <- data.frame(Temperature =  temp_values,
+                             Chill_response = chill_temp_obs$density,
+                             Heat_response = heat_temp_obs$density)
+    
+    density_df_long <- reshape2::melt(density_df, id.vars = 'Temperature', value.name = 'density')
+    
+    temp_response <- data.frame(
+      Temperature = temp_values,
+      Chill_response = gen_bell(par, temp_values),
+      Heat_response = GDH_response(temp_values, par)
+    )
+    
+    melted_response <- reshape2::melt(temp_response, id.vars = 'Temperature')
+    melted_response <- merge(melted_response, density_df_long, by = c('Temperature', 'variable'))
+    
+    
+    #color gradient for density of observations
+    
+    if(type == 1){
+      p1 <- melted_response %>% 
+        filter(variable == 'Chill_response') %>% 
+        ggplot(aes(x = Temperature, y = value, color = density)) +
+        geom_line(size = 2) +
+        ylab("Temperature response (arbitrary units)") +
+        xlab("Temperature (°C)") +
+        facet_wrap(vars(variable),
+                   scales = "free",
+                   labeller = labeller(variable = c(
+                     Chill_response = c("Chill response"),
+                     Heat_response = c("Heat response")
+                   ))) +
+        scale_colour_distiller(palette = "PuBu",direction = 1, name = 'Relative Frequency\nof temperature')+
+        #scale_colour_brewer(palette = "YlOrRd")+
+        #scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+        theme_bw(base_size = 15) +
+        theme(legend.position = "none")
+      
+      p2 <- melted_response %>% 
+        filter(variable == 'Heat_response') %>% 
+        ggplot(aes(x = Temperature, y = value, color = density)) +
+        geom_line(size = 2) +
+        xlab("Temperature (°C)") +
+        ylab('') +
+        facet_wrap(vars(variable),
+                   scales = "free",
+                   labeller = labeller(variable = c(
+                     Chill_response = c("Chill response"),
+                     Heat_response = c("Heat response")
+                   ))) +
+        scale_colour_distiller(palette = "Reds",direction = 1, name = '')+
+        #scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+        theme_bw(base_size = 15) +
+        theme(legend.position = "none")
+      
+      xlab <- p1$labels$x
+      p1$labels$x <- p2$labels$x <- " "
+      
+      p3 <- ggplot(data.frame(l = xlab, x = 1, y = 20)) +
+        geom_text(aes(x, y, label = l), size = 6) + 
+        theme_void(base_size = 15) +
+        coord_cartesian(clip = "off")+
+        theme(plot.margin = margin(b = 0))
+      
+      library(patchwork)
+      p <- (p1 + p2) / p3 +   plot_layout(guides = 'collect') +
+        plot_layout(heights = c(25, 1))
+    } else if(type == 2) {
+      melted_response[melted_response$variable == 'Chill_response',]$density <- melted_response[melted_response$variable == 'Chill_response',]$density * max(melted_response[melted_response$variable == 'Chill_response',]$value)
+      
+      
+      p <- melted_response %>% 
+        ggplot(aes(x = Temperature, y = value)) +
+        geom_bar(stat = 'identity', aes(x = Temperature, y = density), fill = 'grey') +
+        geom_line(size = 2, aes(col = variable)) +
+        ylab("Temperature response (arbitrary units)") +
+        xlab("Temperature (°C)") +
+        #scale_y_continuous(sec.axis=sec_axis(~.,name="Relative Frequency"))+
+        facet_wrap(vars(variable),
+                   scales = "free",
+                   labeller = labeller(variable = c(
+                     Chill_response = c("Chill response"),
+                     Heat_response = c("Heat response")
+                   ))) +
+        scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+        theme_bw(base_size = 15)
+    }
+    
   
-  melted_response <- reshape2::melt(temp_response, id.vars = "Temperature")
+
+  } else {
+    temp_response <- data.frame(
+      Temperature = temp_values,
+      Chill_response = gen_bell(par, temp_values),
+      Heat_response = GDH_response(temp_values, par)
+    )
+    
+    melted_response <- reshape2::melt(temp_response, id.vars = "Temperature")
+    
+    p <- ggplot(melted_response, aes(x = Temperature, y = value)) +
+      geom_line(size = 2, aes(col = variable)) +
+      ylab("Temperature response (arbitrary units)") +
+      xlab("Temperature (°C)") +
+      facet_wrap(vars(variable),
+                 scales = "free",
+                 labeller = labeller(variable = c(
+                   Chill_response = c("Chill response"),
+                   Heat_response = c("Heat response")
+                 ))) +
+      scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+      theme_bw(base_size = 15) +
+      theme(legend.position = "none")
+  }
   
-  return(ggplot(melted_response, aes(x = Temperature, y = value)) +
-           geom_line(size = 2, aes(col = variable)) +
-           ylab("Temperature response (arbitrary units)") +
-           xlab("Temperature (°C)") +
-           facet_wrap(vars(variable),
-                      scales = "free",
-                      labeller = labeller(variable = c(
-                        Chill_response = c("Chill response"),
-                        Heat_response = c("Heat response")
-                      ))) +
-           scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
-           theme_bw(base_size = 15) +
-           theme(legend.position = "none"))
+  
+
+  
+  return(p)
 }
 
 #function to see development of the parameters
