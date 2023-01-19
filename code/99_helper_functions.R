@@ -4,6 +4,8 @@ library(ggplot2)
 library(tidyr)
 require(reshape2)
 
+source('code/05_functions_meigo_nonlin_equations.R')
+
 #qqplot of phenology data
 
 get_qqplot <- function(cal_data, predicted){
@@ -54,6 +56,24 @@ apply_const_temp <- function(temp,
   return(res$y[length(res$y)])
 }
 
+apply_const_temp_v2 <- function(temp, par,
+                             portions = 1200,
+                             deg_celsius = TRUE){
+  temp_vector <- rep(temp, times = portions)
+  res <- PhenoFlex(temp = temp_vector, 
+                   times = 1:length(temp_vector),
+                   yc = par[1],  zc = par[2], 
+                   s1 = par[3], Tu = par[4],
+                   E0 = par[5], E1 = par[6],
+                   A0 = par[7], A1 = par[8],
+                   Tf = par[9],  Tc = par[10],
+                   Tb = par[11],  slope = par[12],
+                   Imodel = 0L, basic_output=FALSE)
+  
+  
+  return(res$y[length(res$y)])
+}
+
 gen_bell <- function(par, temp_values = seq(-5, 20, 0.1)) {
   E0 <- par[5]
   E1 <- par[6]
@@ -77,6 +97,24 @@ gen_bell <- function(par, temp_values = seq(-5, 20, 0.1)) {
   return(invisible(y))
 }
 
+gen_bell_v2 <- function(par, temp_values = seq(-5, 20, 0.1)) {
+  E0 <- par[5]
+  E1 <- par[6]
+  A0 <- par[7]
+  A1 <- par[8]
+  Tf <- par[9]
+  slope <- par[12]
+  
+  y <- c()
+  for (i in seq_along(temp_values)) {
+    y[i] <- apply_const_temp_v2(
+      temp = temp_values[i],
+      par = par
+    )
+  }
+  return(invisible(y))
+}
+
 GDH_response <- function(T, par)
 {
   Tb <- par[11]
@@ -92,15 +130,239 @@ GDH_response <- function(T, par)
   return(GDH_weight)
 }
 
-
-get_temp_response_plot <- function(par, temp_values, log_A = FALSE, 
+get_temp_response_plot_v2 <- function(par, temp_values,
+                                   par_type = 'old',
+                                   log_A = FALSE, 
                                    hourtemps = NULL, chill_months = c(11:12,1:2),
                                    heat_months = 1:5, type = 1){
   
-  if(log_A){
-    par[7]<-exp(par[7])
-    par[8]<-exp(par[8])
+  if(par_type == 'new'){
+    params<-numeric(4)
+    
+    params[1] <- par[5]   #theta*
+    params[2] <- par[6]    #theta_c
+    params[3] <- par[7]    #Tau(thetha*)
+    params[4] <- par[8]     #pi_c
+    
+    
+    output<-nleqslv(c(500, 15000), solve_nle, jac=NULL, params, xscalm="auto", method="Newton",
+                    control=list(trace=0,allowSingular=TRUE))
+    
+    
+    #This is a numerical method which can produce non-convergence. Check this
+    if (output$termcd >= 3){
+      #if the nle algorithm has stalled just discard this solution
+      E0<-NA; E1<-NA; A0<-NA; A1<-NA
+      error('Could not find corresponding values of E0, E1, A0 and A1')
+      
+      #You would add here a flag to let your optimization procedure know
+      #That this solution should be ignored by lack of convergence
+      
+    } else {
+      
+      par[5] <- E0 <- output$x[1]
+      par[6] <- E1 <- output$x[2]
+      
+      #A1 and A0 can be calculated through Equations 36 and 37
+      
+      q=1/params[1]-1/params[2]
+      
+      par[8] <- A1 <- -exp(E1/params[1])/params[3]*log(1-exp((E0-E1)*q))
+      par[7] <- A1*exp((E0-E1)/params[2])
+    }
+    
+  } else {
+    if(log_A){
+      par[7]<-exp(par[7])
+      par[8]<-exp(par[8])
+    }
   }
+  
+  
+  
+  
+  if(is.null(hourtemps) == FALSE){
+    chill_temp_obs <- hourtemps %>% 
+      filter(Month %in% chill_months) %>% 
+      summarise(density = c(hist(Temp, breaks = temp_values, plot = FALSE)$density,NA),
+                count = c(hist(Temp, breaks = temp_values, plot = FALSE)$counts, NA)) %>% 
+      mutate(density = density / max(density,na.rm = TRUE))
+    
+    heat_temp_obs <- hourtemps %>% 
+      filter(Month %in% heat_months) %>% 
+      summarise(density = c(hist(Temp, breaks = temp_values, plot = FALSE)$density,NA),
+                count = c(hist(Temp, breaks = temp_values, plot = FALSE)$counts, NA)) %>% 
+      mutate(density = density / max(density,na.rm = TRUE))
+    
+    density_df <- data.frame(Temperature =  temp_values,
+                             Chill_response = chill_temp_obs$density,
+                             Heat_response = heat_temp_obs$density)
+    
+    density_df_long <- reshape2::melt(density_df, id.vars = 'Temperature', value.name = 'density')
+    
+    temp_response <- data.frame(
+      Temperature = temp_values,
+      Chill_response = gen_bell_v2(par, temp_values),
+      Heat_response = GDH_response(temp_values, par)
+    )
+    
+    melted_response <- reshape2::melt(temp_response, id.vars = 'Temperature')
+    melted_response <- merge(melted_response, density_df_long, by = c('Temperature', 'variable'))
+    
+    
+    #color gradient for density of observations
+    
+    if(type == 1){
+      p1 <- melted_response %>% 
+        filter(variable == 'Chill_response') %>% 
+        ggplot(aes(x = Temperature, y = value, color = density)) +
+        geom_line(size = 2) +
+        ylab("Temperature response (arbitrary units)") +
+        xlab("Temperature (°C)") +
+        facet_wrap(vars(variable),
+                   scales = "free",
+                   labeller = labeller(variable = c(
+                     Chill_response = c("Chill response"),
+                     Heat_response = c("Heat response")
+                   ))) +
+        scale_colour_distiller(palette = "PuBu",direction = 1, name = 'Relative Frequency\nof temperature')+
+        #scale_colour_brewer(palette = "YlOrRd")+
+        #scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+        theme_bw(base_size = 15) +
+        theme(legend.position = "none")
+      
+      p2 <- melted_response %>% 
+        filter(variable == 'Heat_response') %>% 
+        ggplot(aes(x = Temperature, y = value, color = density)) +
+        geom_line(size = 2) +
+        xlab("Temperature (°C)") +
+        ylab('') +
+        facet_wrap(vars(variable),
+                   scales = "free",
+                   labeller = labeller(variable = c(
+                     Chill_response = c("Chill response"),
+                     Heat_response = c("Heat response")
+                   ))) +
+        scale_colour_distiller(palette = "Reds",direction = 1, name = '')+
+        #scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+        theme_bw(base_size = 15) +
+        theme(legend.position = "none")
+      
+      xlab <- p1$labels$x
+      p1$labels$x <- p2$labels$x <- " "
+      
+      p3 <- ggplot(data.frame(l = xlab, x = 1, y = 20)) +
+        geom_text(aes(x, y, label = l), size = 6) + 
+        theme_void(base_size = 15) +
+        coord_cartesian(clip = "off")+
+        theme(plot.margin = margin(b = 0))
+      
+      library(patchwork)
+      p <- (p1 + p2) / p3 +   plot_layout(guides = 'collect') +
+        plot_layout(heights = c(25, 1))
+    } else if(type == 2) {
+      melted_response[melted_response$variable == 'Chill_response',]$density <- melted_response[melted_response$variable == 'Chill_response',]$density * max(melted_response[melted_response$variable == 'Chill_response',]$value)
+      
+      
+      p <- melted_response %>% 
+        ggplot(aes(x = Temperature, y = value)) +
+        geom_bar(stat = 'identity', aes(x = Temperature, y = density), fill = 'grey') +
+        geom_line(size = 2, aes(col = variable)) +
+        ylab("Temperature response (arbitrary units)") +
+        xlab("Temperature (°C)") +
+        #scale_y_continuous(sec.axis=sec_axis(~.,name="Relative Frequency"))+
+        facet_wrap(vars(variable),
+                   scales = "free",
+                   labeller = labeller(variable = c(
+                     Chill_response = c("Chill response"),
+                     Heat_response = c("Heat response")
+                   ))) +
+        scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+        theme_bw(base_size = 15)
+    }
+    
+    
+    
+  } else {
+    temp_response <- data.frame(
+      Temperature = temp_values,
+      Chill_response = gen_bell(par, temp_values),
+      Heat_response = GDH_response(temp_values, par)
+    )
+    
+    melted_response <- reshape2::melt(temp_response, id.vars = "Temperature")
+    
+    p <- ggplot(melted_response, aes(x = Temperature, y = value)) +
+      geom_line(size = 2, aes(col = variable)) +
+      ylab("Temperature response (arbitrary units)") +
+      xlab("Temperature (°C)") +
+      facet_wrap(vars(variable),
+                 scales = "free",
+                 labeller = labeller(variable = c(
+                   Chill_response = c("Chill response"),
+                   Heat_response = c("Heat response")
+                 ))) +
+      scale_color_manual(values = c("Chill_response" = "blue", "Heat_response" = "red")) +
+      theme_bw(base_size = 15) +
+      theme(legend.position = "none")
+  }
+  
+  
+  
+  
+  return(p)
+}
+
+
+get_temp_response_plot <- function(par, temp_values,
+                                   par_type = 'old',
+                                   log_A = FALSE, 
+                                   hourtemps = NULL, chill_months = c(11:12,1:2),
+                                   heat_months = 1:5, type = 1){
+  
+  if(par_type == 'new'){
+    params<-numeric(4)
+    
+    params[1] <- par[5]   #theta*
+    params[2] <- par[6]    #theta_c
+    params[3] <- par[7]    #Tau(thetha*)
+    params[4] <- par[8]     #pi_c
+    
+    
+    output<-nleqslv(c(500, 15000), solve_nle, jac=NULL, params, xscalm="auto", method="Newton",
+                    control=list(trace=0,allowSingular=TRUE))
+    
+    
+    #This is a numerical method which can produce non-convergence. Check this
+    if (output$termcd >= 3){
+      #if the nle algorithm has stalled just discard this solution
+      E0<-NA; E1<-NA; A0<-NA; A1<-NA
+      error('Could not find corresponding values of E0, E1, A0 and A1')
+      
+      #You would add here a flag to let your optimization procedure know
+      #That this solution should be ignored by lack of convergence
+      
+    } else {
+      
+      par[5] <- output$x[1]
+      par[6] <- output$x[2]
+      
+      #A1 and A0 can be calculated through Equations 36 and 37
+      
+      q=1/params[1]-1/params[2]
+      
+      par[8] <- -exp(E1/params[1])/params[3]*log(1-exp((E0-E1)*q))
+      par[7] <- A1*exp((E0-E1)/params[2])
+    }
+    
+  } else {
+    if(log_A){
+      par[7]<-exp(par[7])
+      par[8]<-exp(par[8])
+    }
+  }
+  
+
   
 
   if(is.null(hourtemps) == FALSE){
