@@ -171,6 +171,80 @@ evaluation_function_meigo <- function(x,
 
 }
 
+evaluation_function_meigo_vns <- function(x, 
+                                      modelfn,
+                                      bloomJDays,
+                                      SeasonList,
+                                      na_penalty = 365,
+                                      return_bloom_days = FALSE){
+  
+  #innput:
+  #         x is the parameters in meigo
+  #         modelfn is the function used to calculate the bloomdays
+  #         SeasonList contains the weather data for the different years
+  #         na_penalty is the value used if the model failed to predict any day with the current set of parameters for a particular year
+  
+  #output: inequality constraints g
+  #        model performance value F
+  
+  #change the name of the parameters, dont know if necessary
+  par <- x
+  
+  #calculate the predicted flower dates
+  pred_bloom <- unlist(lapply(X = SeasonList, FUN = modelfn, par = par))
+  
+  #if the model returns no bloom day, then give penalty term instead
+  pred_bloom <- ifelse(is.na(pred_bloom), yes = na_penalty, no = pred_bloom)
+  
+  #calculate the model performance value
+  F <- sum((pred_bloom - bloomJDays)^2)
+  
+  
+  
+  #####
+  #inequality constraints
+  #####
+  
+  #this is the vector containing the values for the inequality constraints
+  #at first initialize the vector
+  g <- rep(0,5)
+  
+  
+  #equality constraints should be always stated before inequality constraints, according to meigo vignette
+  #(but we dont have any in this case)
+  
+  
+  #inequality constraints are reformulated as differences
+  
+  #Tu >= Tb
+  g[1] <- x[4] - x[11]
+  #Tx >= Tb
+  g[2] <- x[10] - x[11]
+  #Tc >= Tu
+  g[3] <- x[10] - x[4]
+  
+  
+  #the q10 value should be between 1.5 and 3.5
+  #q10 formation = exp((10*E0)/(T2-T1))
+  #q10 destruction = exp((10*E1)/(T2-T1))
+  #T1 = 297
+  #T2 = 279
+  #parameters T1 and T2 chosen after Egea 2020
+  #ranges for q10 are provided in c_L and c_U
+  g[4] <- exp((10 * x[5]) / (297 * 279))
+  
+  g[5] <- exp((10 * x[6]) / (297 * 279))
+  
+  
+  if(return_bloom_days == FALSE){
+    #output
+    return(F)
+  } else{
+    return(pred_bloom)
+  }
+  
+}
+
 #here I mainly follow the way MEIGO needs the optimization problem to be specified
 #it needs:
 #   - the function that takes the parameters and returns the model performance
@@ -187,11 +261,12 @@ problem<-list(f="evaluation_function_meigo",
               x_L = x_L,
               x_U = x_U,
               c_L = c_L, 
-              c_U = c_U)
+              c_U = c_U,
+              vtr = 250)
 
 #specify options for the solver
 opts<-list(#maxeval = 1000,
-  maxtime = 60 * 2, 
+  maxtime = 60 * 5, 
   local_solver = 'DHC', 
   log_var = 7:8,
   local_bestx = 1,
@@ -204,6 +279,22 @@ Results_meigo<-MEIGO(problem,
                      bloomJDays = bloomJDays,
                      SeasonList = SeasonList)
 
+
+problem<-list(f="evaluation_function_meigo_vns",
+              x_0 = x_0,
+              x_L = x_L,
+              x_U = x_U)
+
+#specify options for the solver
+opts<-list(maxtime=60 * 2, use_local=1,
+           aggr=0, local_search_type=1, decomp=1, maxdist=0.5)
+
+Results_meigo<-MEIGO(problem,
+                     opts,
+                     algorithm="VNS", 
+                     modelfn = custom_PhenoFlex_GDHwrapper,
+                     bloomJDays = bloomJDays,
+                     SeasonList = SeasonList)
 
 #use evaluation function to return predicted days instead of f
 pred_days <- evaluation_function_meigo(x =  Results_meigo$xbest,
@@ -220,13 +311,68 @@ chillR::RMSEP(predicted = pred_days, observed = bloomJDays)
 
 #get function to create temperature response plot
 source('code/99_helper_functions.R')
-get_temp_response_plot(Results_meigo$xbest, temp_values = seq(-10,40, by = 0.1), log_A = TRUE)
+get_temp_response_plot(result_list_combined[[start]][[top_results$solver[i]]]$xbest, 
+                       temp_values = seq(-10,40, by = 0.1), log_A = TRUE, hourtemps = hourtemps[hourtemps$Year %in% years,])
 
 
 
 
+#contract the search space
+contract_percent <- 0.1
 
 
+contract_list <- list()
+for(i in 1:10){
+  
+  if(i == 1){
+    x_L_old <- x_L
+    x_U_old <- x_U
+    par <- Results_meigo$xbest
+  } else {
+    x_L_old <- contract_list[[i-1]]$x_L
+    x_U_old <- contract_list[[i-1]]$x_U
+    par <- contract_list[[i-1]]$res$xbest
+  }
+
+  x_L_new <- x_L_old * (1 + contract_percent)
+  x_L_new <- ifelse(x_L_new == 0, yes = x_L_new + (contract_percent * x_U_old), no = x_L_new)
+  
+  x_U_new <- x_U_old * (1 - contract_percent)
+  
+  #prevent the start point to be outside the bounds
+  x_L_new <- ifelse(x_L_new > Results_meigo$xbest, yes = x_L_old, no = x_L_new) 
+  x_U_new <- ifelse(x_U_new < Results_meigo$xbest, yes = x_U_old, no = x_U_new) 
+  
+  #now do a followup search
+  problem<-list(f="evaluation_function_meigo_vns",
+                x_0 = par,
+                x_L = x_L_new,
+                x_U = x_U_new)
+  
+  #specify options for the solver
+  opts<-list(maxtime=60 * 1, use_local=1,
+             aggr=0, local_search_type=1, decomp=1, maxdist=0.5)
+  
+  Results_meigo_r2<-MEIGO(problem,
+                          opts,
+                          algorithm="VNS", 
+                          modelfn = custom_PhenoFlex_GDHwrapper,
+                          bloomJDays = bloomJDays,
+                          SeasonList = SeasonList)
+  
+  contract_list[[i]] <- list(res = Results_meigo_r2,
+                             x_U = x_U_new, 
+                             x_L = x_L_new)
+}
+
+pheno
+
+
+hajar_f <- purrr::map(hajar_data, function(x) x$model_fit$trace.mat[,'current.minimum']) %>% 
+  unlist()
+plot(hajar_f,ylim = c(0,2000))
+
+min(which(hajar_f < 500))
 
 
 
