@@ -190,16 +190,18 @@ for(i in 1:length(res_list)){
 
 performance_df %>% 
   ggplot(aes(x = eval/1000)) +
-  geom_point(aes(y = rmsep_train, col = 'training')) +
-  geom_line(aes(y = rmsep_train, col = 'training')) +
+  geom_point(aes(y = f, col = 'training')) +
+  geom_line(aes(y = f, col = 'training')) +
   #geom_point(aes(y = rmsep_eval, col = 'eval')) +
   #geom_line(aes(y = rmsep_eval, col = 'eval')) +
   facet_grid(solver~cultivar)+
-  ylab('RMSE (days)') +
+  ylab('Residual sum of squares (RSS)') +
   xlab(expression ("Number of Evaluations * "~10^-2))+
   scale_color_manual(breaks = 'training', values = 'Firebrick')+
   #xlab('Number of Evaluations * 10^-2')
   theme_bw()
+ggsave('fitting_CKA_rss.jpeg', height = 10, width = 20, units = 'cm',
+       device = 'jpeg')
 
 
 performance_df %>% 
@@ -214,7 +216,8 @@ performance_df %>%
   scale_color_manual(breaks = c('training', 'evaluation'), 
                      values = c('Firebrick', 'Steelblue'))+
   theme_bw()
-
+ggsave('fitting_CKA.jpeg', height = 10, width = 20, units = 'cm',
+       device = 'jpeg')
 
 source('code/99_helper_functions.R')
 temp_val <- seq(-30,40, by = 0.1)
