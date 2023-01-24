@@ -64,9 +64,11 @@ source('code/04_functions_meigo.R')
 
 #define boundaries and starting point
 #      ('yc', 'zc', 's1', 'Tu', 'theta*', 'theta_c', 'Tau(thetha*)', 'pie_c',   'Tf', 'Tc', 'Tb',  'slope')
-x_0 <- c(40,   190,   0.5,  25,   278.1,    285.1,   47.7,           30.6,        4,   36,     4,    1.60)
-x_U <- c(80,   500,   1.0,  30,   281,      287,       48,             32,       10,   40,    10,    5.00)
-x_L <- c(20,   100,   0.1,   0,   279,      284,       16,             24,        0,    0,     0,    0.05)
+x_0 <- c(40,   190,   0.5,  25,   279,    286.1,   47.7,           28,        4,   36,     4,    1.60)
+x_U <- c(80,   500,   1.0,  30,   281,      287,       48,             28,       10,   40,    10,    5.00)
+x_L <- c(20,   100,   0.1,   0,   279,      286,       16,             24,        0,    0,     0,    0.05)
+#the ranges mentioned in Egea (2021) Table 1 do not match the ranges of the reported parameters in the result section of the same paper
+#--> sofar used custom ranges, but maybe now use strictly the ones from table 1
 
 #limits for the inequality constraints
 #         #gdh parameters   #q10 for E0 and E1
@@ -76,12 +78,14 @@ c_U <- c(Inf, Inf, Inf,     3.5, 3.5)
 
 set.seed(123456789)
 res_list <- list()
-#local_solver <- c('BFGS','SA', 'SOLNP', 'DHC')
-local_solver <- c('SA')
+local_solver <- c('BFGS','SA', 'SOLNP', 'DHC')
+#local_solver <- c('SA')
 
 #bind pear and apple data together
 pheno_train <- list(boskop_train, alex_train)
+pheno_eval <- list(boskop_eval, alex_eval)
 temp_list <- list(SeasonList_boskop, SeasonList_alex)
+temp_list_eval <- list(SeasonList_boskop_eval, SeasonList_alex_eval)
 
 #iterate over species / cultivars
 for(i in 1:length(pheno_train)){
@@ -104,7 +108,8 @@ for(i in 1:length(pheno_train)){
       maxtime = 60 * 5, 
       local_solver = solver, 
       local_bestx = 1,
-      inter_save = 0)
+      inter_save = 0,
+      ndiverse = 1000)
     
     #save results
     res_list[[i]][[solver]]<-MEIGO(problem,
@@ -150,7 +155,7 @@ for(i in 1:length(res_list)){
                                           modelfn = custom_PhenoFlex_GDHwrapper,
                                           SeasonList = temp_list[[i]])
       
-      pred_eval <- return_predicted_days(convert_parameters(par), 
+      pred_eval <- return_predicted_days(par = convert_parameters(par), 
                                          modelfn = custom_PhenoFlex_GDHwrapper,
                                          SeasonList = temp_list_eval[[i]])
       

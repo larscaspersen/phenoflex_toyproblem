@@ -275,9 +275,11 @@ return_predicted_days <- function(par,
   #        model performance value F
   
   #change the name of the parameters, dont know if necessary
-  par 
   
   #calculate the predicted flower dates
+  # purrr::map(SeasonList, function(x){
+  #   print()
+  # })
   pred_bloom <- unlist(lapply(X = SeasonList, FUN = modelfn, par = par))
   
   #if the model returns no bloom day, then give penalty term instead
