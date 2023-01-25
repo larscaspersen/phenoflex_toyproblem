@@ -78,7 +78,7 @@ c_U <- c(Inf, Inf, Inf,     3.5, 3.5)
 
 set.seed(123456789)
 res_list <- list()
-local_solver <- c('BFGS','SA', 'SOLNP', 'DHC')
+local_solver <- c('DHC')
 #local_solver <- c('SA')
 
 #bind pear and apple data together
@@ -105,7 +105,7 @@ for(i in 1:length(pheno_train)){
     
     #specify options for the solver
     opts<-list(#maxeval = 1000,
-      maxtime = 60 * 5, 
+      maxtime = 60 * 1, 
       local_solver = solver, 
       local_bestx = 1,
       inter_save = 0,
@@ -226,14 +226,11 @@ ggsave('fitting_CKA.jpeg', height = 10, width = 20, units = 'cm',
 
 source('code/99_helper_functions.R')
 temp_val <- seq(-30,40, by = 0.1)
-get_temp_response_plot_v2(par = res_list[[1]][[3]]$xbest, 
+get_temp_response_plot_v2(par = res_list[[1]][[1]]$xbest, 
                           temp_values = temp_val, 
-                          par_type = 'new', hourtemps = hourtemps)
+                          par_type = 'new', hourtemps = hourtemps, type = 2)
 
-get_temp_response_plot_v2(par = res_list[[1]][[3]]$x[5,], 
+get_temp_response_plot_v2(par = res_list[[2]][[1]]$xbest, 
                           temp_values = temp_val, 
-                          par_type = 'new', hourtemps = hourtemps)
+                          par_type = 'new', hourtemps = hourtemps, type = 2)
 
-get_temp_response_plot_v2(par = res_list[[2]][[4]]$xbest, 
-                          temp_values = temp_val, 
-                          par_type = 'new', hourtemps = hourtemps)
